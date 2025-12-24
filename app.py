@@ -6,8 +6,8 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="Pending Course Dashboard", layout="wide")
-st.title("📘 Pending Course Completion Dashboard")
+st.set_page_config(page_title="RMS TP Pending Courses", layout="wide")
+st.title("📘 RMS TP – Pending Course Completion Dashboard")
 
 uploaded_file = st.file_uploader(
     "Upload Excel file (each sheet = pending list of a course)",
@@ -23,8 +23,8 @@ if uploaded_file:
 
     # Column names as per your Excel
     name_cols = ["Employee_name", "Employee Name"]
-    emp_cols = ["Employee_id", "Employee No.", "Employee No"]
     office_cols = ["Office of working", "Office of Working"]
+    division_cols = ["Division"]
 
     # ---------------- READ EACH SHEET ----------------
     for sheet in xls.sheet_names:
@@ -32,31 +32,44 @@ if uploaded_file:
         # Header is in 2nd row
         df = pd.read_excel(uploaded_file, sheet_name=sheet, header=1)
 
+        # Clean columns
         df.columns = df.columns.astype(str).str.strip()
         df = df.dropna(axis=1, how="all")
         df = df[[c for c in df.columns if not c.lower().startswith("unnamed")]]
 
         emp_name_col = next((c for c in name_cols if c in df.columns), None)
-        emp_id_col = next((c for c in emp_cols if c in df.columns), None)
         office_col = next((c for c in office_cols if c in df.columns), None)
+        division_col = next((c for c in division_cols if c in df.columns), None)
 
-        if not emp_name_col:
+        if not emp_name_col or not division_col:
             continue
 
+        # ---------------- FILTER ONLY RMS TP ----------------
+        df = df[
+            df[division_col]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .eq("RMS TP")
+        ]
+
+        if df.empty:
+            continue
+
+        # ---------------- PROCESS PENDING EMPLOYEES ----------------
         for _, row in df.iterrows():
             emp_name = str(row[emp_name_col]).strip()
 
             if not emp_name:
                 continue
 
-            # Store master employee info ONCE
+            # Master employee info (stored once)
             if emp_name not in employee_master:
                 employee_master[emp_name] = {
                     "Employee Name": emp_name,
                     "Office of Working": row.get(office_col, "")
                 }
 
-            # Pending record (1 = pending)
             pending_records.append({
                 "Employee Name": emp_name,
                 "Course": sheet,
@@ -64,7 +77,7 @@ if uploaded_file:
             })
 
     if not pending_records:
-        st.error("No valid data found in the uploaded Excel.")
+        st.error("No RMS TP pending data found in the uploaded Excel.")
         st.stop()
 
     pending_df = pd.DataFrame(pending_records)
@@ -82,7 +95,7 @@ if uploaded_file:
     final_df = master_df.merge(matrix_df, on="Employee Name", how="left")
     final_df = final_df.fillna(0)
 
-    # ---------------- TOTAL COURSES (PENDING COUNT) ----------------
+    # ---------------- TOTAL COURSES ----------------
     course_cols = [
         c for c in final_df.columns
         if c not in ["Employee Name", "Office of Working"]
@@ -90,20 +103,20 @@ if uploaded_file:
 
     final_df["Total Courses"] = final_df[course_cols].sum(axis=1)
 
-    # ---------------- SORT DESCENDING (IMPORTANT) ----------------
+    # ---------------- SORT DESCENDING ----------------
     final_df = final_df.sort_values(
         by="Total Courses",
         ascending=False
     ).reset_index(drop=True)
 
-    st.success("✅ Pending course matrix generated")
+    st.success("✅ RMS TP pending course matrix generated")
     st.dataframe(final_df)
 
     # ---------------- EXPORT TO EXCEL ----------------
     def export_to_excel(df):
         wb = Workbook()
         ws = wb.active
-        ws.title = "Pending Courses"
+        ws.title = "RMS TP Pending Courses"
 
         for r in dataframe_to_rows(df, index=False, header=True):
             ws.append(r)
@@ -129,8 +142,8 @@ if uploaded_file:
     excel_bytes = export_to_excel(final_df)
 
     st.download_button(
-        "📥 Download Pending Course Report (Excel)",
+        "📥 Download RMS TP Pending Course Report",
         excel_bytes.getvalue(),
-        "Pending_Course_Report.xlsx",
+        "RMS_TP_Pending_Courses.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
