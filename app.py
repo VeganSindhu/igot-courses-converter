@@ -6,164 +6,123 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="Course Completion Dashboard",
-    layout="wide"
-)
-
-st.title("📘 Course Completion Dashboard")
+st.set_page_config(page_title="Pending Course Dashboard", layout="wide")
+st.title("📘 Pending Course Completion Dashboard")
 
 uploaded_file = st.file_uploader(
-    "Upload Excel file (multiple sheets allowed)",
+    "Upload Excel file (each sheet = pending list of a course)",
     type=["xlsx"]
 )
 
-# ---------------- MAIN LOGIC ----------------
 if uploaded_file:
 
     xls = pd.ExcelFile(uploaded_file)
-    combined_df = pd.DataFrame()
 
-    # Column name possibilities (extended for your file)
-    possible_name_cols = [
-        "Employee Name", "Employee_name", "Name", "Name of the Official"
-    ]
+    all_records = []
+    all_employees = {}
 
-    possible_empno_cols = [
-        "Employee No.", "Employee No", "Employee_id", "Employee ID", "Emp No"
-    ]
+    # Column possibilities (matches your file)
+    name_cols = ["Employee_name", "Employee Name"]
+    emp_cols = ["Employee_id", "Employee No.", "Employee No"]
+    office_cols = ["Office of working", "Office of Working"]
 
+    # -------- READ ALL SHEETS --------
     for sheet in xls.sheet_names:
 
-        # Your file has headers in 2nd row → header=1
+        # Header is in second row
         df = pd.read_excel(uploaded_file, sheet_name=sheet, header=1)
 
-        # Clean column names
         df.columns = df.columns.astype(str).str.strip()
-
-        # Drop empty & unnamed columns
         df = df.dropna(axis=1, how="all")
         df = df[[c for c in df.columns if not c.lower().startswith("unnamed")]]
 
-        # -------- Detect Employee Name column --------
-        emp_name_col = None
-        for col in possible_name_cols:
-            if col in df.columns:
-                emp_name_col = col
-                break
+        emp_name_col = next((c for c in name_cols if c in df.columns), None)
+        emp_no_col = next((c for c in emp_cols if c in df.columns), None)
+        office_col = next((c for c in office_cols if c in df.columns), None)
 
-        # -------- Detect Employee ID column --------
-        emp_no_col = None
-        for col in possible_empno_cols:
-            if col in df.columns:
-                emp_no_col = col
-                break
-
-        # Skip sheet if essential columns missing
-        if emp_name_col is None or emp_no_col is None:
+        if not emp_name_col:
             continue
 
-        # ---- IMPORTANT ----
-        # Your file is ALREADY filtered (pending list)
-        # So we DO NOT filter RMS TP or anything else
-        df_valid = df.copy()
+        for _, row in df.iterrows():
+            emp_name = str(row[emp_name_col]).strip()
 
-        # Add course name from sheet name
-        df_valid["Course Name"] = sheet
+            if not emp_name:
+                continue
 
-        # Normalize column names
-        df_valid = df_valid.rename(
-            columns={
-                emp_name_col: "Employee Name",
-                emp_no_col: "Employee No."
-            }
-        )
+            # store master employee info
+            if emp_name not in all_employees:
+                all_employees[emp_name] = {
+                    "Employee Name": emp_name,
+                    "Office of Working": row.get(office_col, "")
+                }
 
-        combined_df = pd.concat(
-            [combined_df, df_valid],
-            ignore_index=True
-        )
+            all_records.append({
+                "Employee Name": emp_name,
+                "Course": sheet,
+                "Pending": 1
+            })
 
-    # ---------------- VALIDATION ----------------
-    if combined_df.empty:
-        st.error("No valid employee data found in the uploaded file.")
+    if not all_records:
+        st.error("No valid employee data found in Excel.")
         st.stop()
 
-    st.success("✅ Data extracted successfully")
+    pending_df = pd.DataFrame(all_records)
 
-    # Preview
-    st.subheader("📄 Extracted Data Preview")
-    st.dataframe(
-        combined_df[
-            ["Employee Name", "Employee No.", "Course Name"]
-        ]
-    )
+    # -------- BUILD FINAL MATRIX --------
+    employees_df = pd.DataFrame(all_employees.values())
 
-    # ---------------- PIVOT TABLE ----------------
-    st.subheader("📊 Course Completion Pivot")
-
-    pivot_df = combined_df.pivot_table(
+    matrix_df = pending_df.pivot_table(
         index="Employee Name",
-        columns="Course Name",
-        values="Employee No.",
-        aggfunc="count",
+        columns="Course",
+        values="Pending",
+        aggfunc="max",
         fill_value=0
+    ).reset_index()
+
+    final_df = employees_df.merge(matrix_df, on="Employee Name", how="left")
+    final_df = final_df.fillna(0)
+
+    # Add Total Pending Courses column
+    course_cols = final_df.columns.difference(
+        ["Employee Name", "Office of Working"]
     )
+    final_df["Total Courses"] = final_df[course_cols].sum(axis=1)
 
-    # Add totals
-    pivot_df["Grand Total"] = pivot_df.sum(axis=1)
-    pivot_df.loc["Grand Total"] = pivot_df.sum(numeric_only=True)
+    st.success("✅ Pending course matrix generated")
+    st.dataframe(final_df)
 
-    st.dataframe(pivot_df)
-
-    # ---------------- EXCEL EXPORT ----------------
-    def export_pivot_to_excel(df: pd.DataFrame) -> BytesIO:
+    # ---------------- EXPORT TO EXCEL ----------------
+    def export_to_excel(df):
         wb = Workbook()
         ws = wb.active
-        ws.title = "Pivot Summary"
+        ws.title = "Pending Courses"
 
-        for row in dataframe_to_rows(df.reset_index(), index=False, header=True):
-            ws.append(row)
+        for r in dataframe_to_rows(df, index=False, header=True):
+            ws.append(r)
 
-        header_fill = PatternFill(
-            start_color="4472C4",
-            end_color="4472C4",
-            fill_type="solid"
-        )
+        header_fill = PatternFill("solid", fgColor="1F4E78")
         header_font = Font(bold=True, color="FFFFFF")
         center = Alignment(horizontal="center", vertical="center")
 
-        # Header styling
         for cell in ws[1]:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = center
 
-        # Bold Grand Total row
-        for r in ws.iter_rows():
-            if str(r[0].value).strip().lower() == "grand total":
-                for c in r:
-                    c.font = Font(bold=True)
-                    c.alignment = center
-
-        # Auto column width
         for col in ws.columns:
-            max_len = max(
-                len(str(cell.value)) if cell.value else 0
-                for cell in col
-            )
-            ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 45)
+            width = max(len(str(c.value)) if c.value else 0 for c in col)
+            ws.column_dimensions[col[0].column_letter].width = min(width + 3, 45)
 
         output = BytesIO()
         wb.save(output)
         output.seek(0)
         return output
 
-    excel_bytes = export_pivot_to_excel(pivot_df)
+    excel_bytes = export_to_excel(final_df)
 
     st.download_button(
-        label="📥 Download Pivot Excel",
-        data=excel_bytes.getvalue(),
-        file_name="Course_Pivot_Summary.xlsx",
+        "📥 Download Pending Course Report (Excel)",
+        excel_bytes.getvalue(),
+        "Pending_Course_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
