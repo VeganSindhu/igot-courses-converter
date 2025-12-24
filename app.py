@@ -44,17 +44,20 @@ if uploaded_file:
         if not emp_name_col or not division_col:
             continue
 
-        # ---------------- FILTER ONLY RMS TP ----------------
-        df = df[
+               # ---------------- FILTER ONLY RMS TP (ROBUST & SPELLING-SAFE) ----------------
+        df[division_col] = (
             df[division_col]
             .astype(str)
+            .str.replace(r"\s+", " ", regex=True)
             .str.strip()
             .str.upper()
-            .eq("RMS TP")
+        )
+        
+        df = df[
+            df[division_col].str.contains("RMS", na=False)
+            & df[division_col].str.contains("TP", na=False)
         ]
 
-        if df.empty:
-            continue
 
         # ---------------- PROCESS PENDING EMPLOYEES ----------------
         for _, row in df.iterrows():
@@ -147,3 +150,4 @@ if uploaded_file:
         "RMS_TP_Pending_Courses.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
