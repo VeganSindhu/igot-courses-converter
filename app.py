@@ -18,18 +18,18 @@ if uploaded_file:
 
     xls = pd.ExcelFile(uploaded_file)
 
-    all_records = []
-    all_employees = {}
+    pending_records = []
+    employee_master = {}
 
-    # Column possibilities (matches your file)
+    # Column names as per your Excel
     name_cols = ["Employee_name", "Employee Name"]
     emp_cols = ["Employee_id", "Employee No.", "Employee No"]
     office_cols = ["Office of working", "Office of Working"]
 
-    # -------- READ ALL SHEETS --------
+    # ---------------- READ EACH SHEET ----------------
     for sheet in xls.sheet_names:
 
-        # Header is in second row
+        # Header is in 2nd row
         df = pd.read_excel(uploaded_file, sheet_name=sheet, header=1)
 
         df.columns = df.columns.astype(str).str.strip()
@@ -37,7 +37,7 @@ if uploaded_file:
         df = df[[c for c in df.columns if not c.lower().startswith("unnamed")]]
 
         emp_name_col = next((c for c in name_cols if c in df.columns), None)
-        emp_no_col = next((c for c in emp_cols if c in df.columns), None)
+        emp_id_col = next((c for c in emp_cols if c in df.columns), None)
         office_col = next((c for c in office_cols if c in df.columns), None)
 
         if not emp_name_col:
@@ -49,28 +49,28 @@ if uploaded_file:
             if not emp_name:
                 continue
 
-            # store master employee info
-            if emp_name not in all_employees:
-                all_employees[emp_name] = {
+            # Store master employee info ONCE
+            if emp_name not in employee_master:
+                employee_master[emp_name] = {
                     "Employee Name": emp_name,
                     "Office of Working": row.get(office_col, "")
                 }
 
-            all_records.append({
+            # Pending record (1 = pending)
+            pending_records.append({
                 "Employee Name": emp_name,
                 "Course": sheet,
                 "Pending": 1
             })
 
-    if not all_records:
-        st.error("No valid employee data found in Excel.")
+    if not pending_records:
+        st.error("No valid data found in the uploaded Excel.")
         st.stop()
 
-    pending_df = pd.DataFrame(all_records)
+    pending_df = pd.DataFrame(pending_records)
+    master_df = pd.DataFrame(employee_master.values())
 
-    # -------- BUILD FINAL MATRIX --------
-    employees_df = pd.DataFrame(all_employees.values())
-
+    # ---------------- BUILD COURSE MATRIX ----------------
     matrix_df = pending_df.pivot_table(
         index="Employee Name",
         columns="Course",
@@ -79,14 +79,22 @@ if uploaded_file:
         fill_value=0
     ).reset_index()
 
-    final_df = employees_df.merge(matrix_df, on="Employee Name", how="left")
+    final_df = master_df.merge(matrix_df, on="Employee Name", how="left")
     final_df = final_df.fillna(0)
 
-    # Add Total Pending Courses column
-    course_cols = final_df.columns.difference(
-        ["Employee Name", "Office of Working"]
-    )
+    # ---------------- TOTAL COURSES (PENDING COUNT) ----------------
+    course_cols = [
+        c for c in final_df.columns
+        if c not in ["Employee Name", "Office of Working"]
+    ]
+
     final_df["Total Courses"] = final_df[course_cols].sum(axis=1)
+
+    # ---------------- SORT DESCENDING (IMPORTANT) ----------------
+    final_df = final_df.sort_values(
+        by="Total Courses",
+        ascending=False
+    ).reset_index(drop=True)
 
     st.success("✅ Pending course matrix generated")
     st.dataframe(final_df)
